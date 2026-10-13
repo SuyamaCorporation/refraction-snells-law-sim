@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Refraction & Snell's Law Simulator</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#030712; color:#f1f5f9; }
+  #ref-canvas { display:block; border:1px solid #1f2937; cursor:crosshair; }
+  input[type=range] { accent-color:#facc15; }
+  .medium-panel { border-top: 3px solid; }
+</style>
+</head>
+<body class="min-h-screen flex flex-col items-center p-4">
+
+<h1 class="text-2xl font-bold text-yellow-400 mt-3 mb-1">Refraction &amp; Snell's Law</h1>
+<p class="text-gray-400 text-xs mb-4">n₁·sin(θ₁) = n₂·sin(θ₂) · Drag the incident ray endpoint to change angle</p>
+
+<div class="flex gap-4 flex-wrap justify-center items-start">
+  <div>
+    <canvas id="ref-canvas" width="500" height="460" aria-label="Refraction simulation canvas"></canvas>
+    <div id="tir-notice" class="hidden text-center text-red-400 font-bold text-sm mt-2">
+      ⚡ Total Internal Reflection — angle exceeds critical angle
+    </div>
+  </div>
+
+  <!-- Controls panel -->
+  <div class="flex flex-col gap-3 min-w-56">
+    <!-- Medium 1 -->
+    <div class="bg-gray-900 rounded-xl p-3 medium-panel" style="border-color:#60a5fa">
+      <p class="text-sm font-semibold text-blue-400 mb-2">Top Medium (n₁)</p>
+      <div class="flex gap-2 flex-wrap mb-2">
+        <button onclick="setMedium(1,'air')" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs transition">Air (1.0)</button>
+        <button onclick="setMedium(1,'water')" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs transition">Water (1.33)</button>
+        <button onclick="setMedium(1,'glass')" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs transition">Glass (1.5)</button>
+        <button onclick="setMedium(1,'diamond')" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs transition">Diamond (2.42)</button>
+      </div>
+      <label for="n1-slider" class="text-xs text-gray-400">n₁ = <span id="n1-val" class="text-blue-300 font-bold">1.00</span></label>
+      <input id="n1-slider" type="range" min="1.0" max="2.5" step="0.01" value="1.0" class="w-full mt-1"
+        oninput="setN1(parseFloat(this.value))" aria-label="Refractive index of top medium">
+    </div>
+
+    <!-- Medium 2 -->
+    <div class="bg-gray-900 rounded-xl p-3 medium-panel" style="border-color:#4ade80">
+      <p class="text-sm font-semibold text-green-400 mb-2">Bottom Medium (n₂)</p>
+      <div class="flex gap-2 flex-wrap mb-2">
+        <button onclick="setMedium(2,'air')" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs transition">Air (1.0)</button>
+        <button onclick="setMedium(2,'water')" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs transition">Water (1.33)</button>
+        <button onclick="setMedium(2,'glass')" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs transition">Glass (1.5)</button>
+        <button onclick="setMedium(2,'diamond')" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs transition">Diamond (2.42)</button>
+      </div>
+      <label for="n2-slider" class="text-xs text-gray-400">n₂ = <span id="n2-val" class="text-green-300 font-bold">1.50</span></label>
+      <input id="n2-slider" type="range" min="1.0" max="2.5" step="0.01" value="1.5" class="w-full mt-1"
+        oninput="setN2(parseFloat(this.value))" aria-label="Refractive index of bottom medium">
+    </div>
+
+    <!-- Info panel -->
+    <div class="bg-gray-900 rounded-xl p-3 text-xs text-gray-300">
+      <p class="font-semibold text-gray-400 mb-2 uppercase tracking-wide text-xs">Physics</p>
+      <div class="grid grid-cols-2 gap-y-1">
+        <span class="text-gray-400">θ₁ (incident)</span><span id="info-t1" class="text-yellow-300 font-bold text-right">—</span>
+        <span class="text-gray-400">θ₂ (refracted)</span><span id="info-t2" class="text-green-300 font-bold text-right">—</span>
+        <span class="text-gray-400">Critical angle</span><span id="info-tc" class="text-red-300 font-bold text-right">—</span>
+        <span class="text-gray-400">n₁·sin(θ₁)</span><span id="info-snell" class="text-purple-300 font-bold text-right">—</span>
+      </div>
+    </div>
+
+    <!-- Angle control -->
+    <div class="bg-gray-900 rounded-xl p-3">
+      <label for="angle-slider" class="text-xs text-gray-400">Incident angle: <span id="angle-display" class="text-yellow-300 font-bold">45</span>°</label>
+      <input id="angle-slider" type="range" min="0" max="89" value="45" class="w-full mt-1"
+        oninput="setAngle(parseInt(this.value))" aria-label="Angle of incidence">
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('ref-canvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const BOUNDARY = H / 2;
+const ORIGIN_X = W / 2;
+const ORIGIN_Y = BOUNDARY;
+
+let n1 = 1.0, n2 = 1.5;
+let incidentAngleDeg = 45;
+let dragging = false;
+let animPhase = 0;
+
+const MEDIA = { air:1.0, water:1.33, glass:1.5, diamond:2.42 };
+
+function setMedium(which, name) {
+  const v = MEDIA[name];
+  if (which===1) setN1(v);
+  else setN2(v);
+}
+
+function setN1(v) {
+  n1 = Math.max(1.0, Math.min(2.5, v));
+  document.getElementById('n1-slider').value = n1;
+  document.getElementById('n1-val').textContent = n1.toFixed(2);
+  draw();
+}
+
+function setN2(v) {
+  n2 = Math.max(1.0, Math.min(2.5, v));
+  document.getElementById('n2-slider').value = n2;
+  document.getElementById('n2-val').textContent = n2.toFixed(2);
+  draw();
+}
+
+function setAngle(deg) {
+  incidentAngleDeg = deg;
+  document.getElementById('angle-slider').value = deg;
+  document.getElementById('angle-display').textContent = deg;
+  draw();
+}
+
+function draw() {
+  ctx.fillStyle = '#030712';
+  ctx.fillRect(0,0,W,H);
+
+  const t1 = incidentAngleDeg * Math.PI / 180;
+  const sinT2 = n1 * Math.sin(t1) / n2;
+  const isTIR = sinT2 > 1.0 && n1 > n2;
+
+  // Medium backgrounds
+  ctx.fillStyle = 'rgba(37,99,235,0.12)';
+  ctx.fillRect(0,0,W,BOUNDARY);
+  ctx.fillStyle = 'rgba(34,197,94,0.12)';
+  ctx.fillRect(0,BOUNDARY,W,H-BOUNDARY);
+
+  // Medium labels
+  ctx.font = 'bold 13px sans-serif';
+  ctx.fillStyle = 'rgba(96,165,250,0.7)';
+  ctx.textAlign = 'left';
+  ctx.fillText(`n₁ = ${n1.toFixed(2)}`, 12, 22);
+  ctx.fillStyle = 'rgba(74,222,128,0.7)';
+  ctx.fillText(`n₂ = ${n2.toFixed(2)}`, 12, BOUNDARY+20);
+
+  // Boundary line
+  ctx.strokeStyle = '#374151';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6,4]);
+  ctx.beginPath(); ctx.moveTo(0,BOUNDARY); ctx.lineTo(W,BOUNDARY); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Normal line (dashed)
+  ctx.strokeStyle = 'rgba(156,163,175,0.4)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4,4]);
+  ctx.beginPath(); ctx.moveTo(ORIGIN_X, ORIGIN_Y-140); ctx.lineTo(ORIGIN_X, ORIGIN_Y+160); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // === Incident ray ===
+  const rayLen = 160;
+  const t1x = ORIGIN_X - Math.sin(t1) * rayLen;
+  const t1y = ORIGIN_Y - Math.cos(t1) * rayLen;
+
+  // Animate light wave along incident ray
+  ctx.strokeStyle = '#facc15';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(t1x, t1y);
+  ctx.lineTo(ORIGIN_X, ORIGIN_Y);
+  ctx.stroke();
+  // Arrow
+  drawArrow(ctx, t1x, t1y, ORIGIN_X, ORIGIN_Y, '#facc15');
+
+  // === Refracted / TIR ray ===
+  if (isTIR) {
+    // Total internal reflection: reflect
+    const t2x = ORIGIN_X + Math.sin(t1) * rayLen;
+    const t2y = ORIGIN_Y - Math.cos(t1) * rayLen;
+    ctx.strokeStyle = '#f87171';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(ORIGIN_X, ORIGIN_Y);
+    ctx.lineTo(t2x, t2y);
+    ctx.stroke();
+    drawArrow(ctx, ORIGIN_X, ORIGIN_Y, t2x, t2y, '#f87171');
+    document.getElementById('tir-notice').classList.remove('hidden');
+    document.getElementById('info-t2').textContent = 'TIR';
+  } else {
+    document.getElementById('tir-notice').classList.add('hidden');
+    const t2 = Math.asin(sinT2);
+    const t2x = ORIGIN_X + Math.sin(t2) * rayLen * 1.2;
+    const t2y = ORIGIN_Y + Math.cos(t2) * rayLen * 1.2;
+    ctx.strokeStyle = '#4ade80';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(ORIGIN_X, ORIGIN_Y);
+    ctx.lineTo(t2x, t2y);
+    ctx.stroke();
+    drawArrow(ctx, ORIGIN_X, ORIGIN_Y, t2x, t2y, '#4ade80');
+    // θ₂ arc
+    drawArc(ctx, ORIGIN_X, ORIGIN_Y, 50, Math.PI/2, Math.PI/2 + t2, '#4ade80');
+    const t2deg = (t2 * 180/Math.PI).toFixed(1);
+    ctx.fillStyle = '#4ade80';
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`θ₂=${t2deg}°`, ORIGIN_X + 55, ORIGIN_Y + 35);
+    document.getElementById('info-t2').textContent = t2deg + '°';
+  }
+
+  // θ₁ arc
+  drawArc(ctx, ORIGIN_X, ORIGIN_Y, 50, -Math.PI/2, -Math.PI/2 + t1, '#facc15', true);
+  ctx.fillStyle = '#facc15';
+  ctx.font = '12px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(`θ₁=${incidentAngleDeg}°`, ORIGIN_X - 55, ORIGIN_Y - 30);
+
+  // Critical angle indicator
+  let critStr = '—';
+  if (n1 > n2) {
+    const tc = Math.asin(n2/n1);
+    const tcDeg = (tc * 180/Math.PI).toFixed(1);
+    critStr = tcDeg + '°';
+    // Draw critical angle ray (faint)
+    const ctx_x = ORIGIN_X - Math.sin(tc)*rayLen;
+    const ctx_y = ORIGIN_Y - Math.cos(tc)*rayLen;
+    ctx.strokeStyle = 'rgba(248,113,113,0.3)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(ctx_x, ctx_y); ctx.lineTo(ORIGIN_X,ORIGIN_Y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(248,113,113,0.6)';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(`θc=${tcDeg}°`, ORIGIN_X - 8, ORIGIN_Y - 8);
+  }
+
+  // Update info panel
+  document.getElementById('info-t1').textContent = incidentAngleDeg + '°';
+  document.getElementById('info-tc').textContent = critStr;
+  const snellProd = (n1 * Math.sin(t1)).toFixed(4);
+  document.getElementById('info-snell').textContent = snellProd;
+  document.getElementById('angle-display').textContent = incidentAngleDeg;
+}
+
+function drawArrow(ctx2, x1,y1,x2,y2,color) {
+  const angle = Math.atan2(y2-y1,x2-x1);
+  const al = 12, aw = 6;
+  ctx2.fillStyle = color;
+  ctx2.save();
+  ctx2.translate(x2,y2);
+  ctx2.rotate(angle);
+  ctx2.beginPath();
+  ctx2.moveTo(0,0);
+  ctx2.lineTo(-al,-aw/2);
+  ctx2.lineTo(-al,aw/2);
+  ctx2.closePath();
+  ctx2.fill();
+  ctx2.restore();
+}
+
+function drawArc(ctx2, cx, cy, r, startA, endA, color, counterclockwise=false) {
+  ctx2.strokeStyle = color;
+  ctx2.lineWidth = 1.5;
+  ctx2.setLineDash([3,3]);
+  ctx2.beginPath();
+  ctx2.arc(cx, cy, r, startA, endA, counterclockwise);
+  ctx2.stroke();
+  ctx2.setLineDash([]);
+}
+
+// Canvas drag interaction
+canvas.addEventListener('mousedown', e => { dragging = true; updateFromMouse(e); });
+document.addEventListener('mousemove', e => { if (dragging) updateFromMouse(e); });
+document.addEventListener('mouseup', () => dragging=false);
+
+function updateFromMouse(e) {
+  const r = canvas.getBoundingClientRect();
+  const sx = W/r.width;
+  const mx = (e.clientX-r.left)*sx - ORIGIN_X;
+  const my = (e.clientY-r.top)*(H/r.height) - ORIGIN_Y;
+  if (my < 0) { // Only in top half
+    const angle = Math.atan2(-mx, -my);
+    const deg = Math.min(89, Math.max(0, Math.round(Math.abs(angle) * 180/Math.PI)));
+    setAngle(deg);
+  }
+}
+
+// Set initial values
+document.getElementById('n1-val').textContent = n1.toFixed(2);
+document.getElementById('n2-val').textContent = n2.toFixed(2);
+draw();
+
+// Animate wave pulses
+function animLoop() {
+  animPhase += 0.06;
+  draw(); // just redraw (static scene is fine; wave animation would need more)
+  requestAnimationFrame(animLoop);
+}
+// Reduce to static draw unless needed for pulses
+draw();
+</script>
+</body>
+</html>
